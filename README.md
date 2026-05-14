@@ -1,2 +1,2 @@
 # Derivative-Free-Optimization-methods
-Summer 2026 working with Prof. Stephen Becker. Exploring SSD. 
+Summer 2026 working with Prof. Stephen Becker on derivative free optimization methods. Starting with understanding stochastic subspace descent, a method similar to stochastic gradient descent. 
