@@ -6,4 +6,5 @@ $$\vec{x}_{k+1} = \vec{x}_k + \alpha \textbf{P}_k \textbf{P}_k^T \nabla f(\vec{x
 
 $P \in R^{d \times l}, l \leq d$.  
 
-We apply this method specifically to nonlinear least squares problems. 
+We apply this method specifically to nonlinear least squares problems, where we have the new normal equation 
+$$-(JP)^\top r = (JP)^\top (JP) n$$
