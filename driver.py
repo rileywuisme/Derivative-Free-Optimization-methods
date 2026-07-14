@@ -7,7 +7,7 @@ def lambda_max(hvp, dim, rng, iters=30):
         nw = np.linalg.norm(w)
         if nw == 0: break
         v = w / nw
-    return lam
+    return abs(lam)
 
 def linesearch(f, xk, pk, derphi0, old_fval=None, alpha0 = 1.0, c1=1e-4, amin=1e-6):
     '''Parameters: 
@@ -65,60 +65,62 @@ def ssd(f, gradf, x, l = None, ls=None, max_iter=500, seed=0, amin = 1e-6):
     '''
 
     #return lists
-    fx = []
+    fx_history = []
     x_history = []
     stepsize_history = []
-    
+
+    #determining the subspace dimension
     dim = len(x)
     if l is None:
         # default choice for subspace:
         l = min([max([5, int(np.sqrt(dim)) ]), dim])
     if l > dim: raise ValueError('subspace dim should be < dimension')
     if l == dim: print(' Are you sure you want l == dim?')
-        
-    fval = float(f(x)) 
-    rng = np.random.default_rng(seed)
-    alpha0 = float(l)/dim 
 
+    
+    fval = float(f(x))
+    rng = np.random.default_rng(seed)
+    alpha0 = float(l)/dim
+
+    #computing optimal stepsize for fixed step
     hvp = lambda v: p.hprod(v, x=x)
     L = lambda_max(hvp, dim, np.random.default_rng(seed + 1))
     alpha_nols = l / (dim * L)
+    
     for n in range(max_iter):
         grad = gradf(x)
 
-        if l == dim:
+        if l == dim: #simply gradient descent
             Q = np.eye(dim)
             pk = y = grad
         else:
             Z = rng.standard_normal((dim, l))
             Q, _ = linalg.qr(Z, mode='economic') #economic mode for finding the QR so it's not a full square matrix
-            #lambda step is optional, only required for Haar. 
-            # Lambda = np.diag(np.sign(np.diag(R))) # R_ii > 0, ensure unique QR fact. 
             P = np.sqrt(dim / l) * Q 
             y = P.T @ grad
             pk = - P @ y
 
-        #recurse
-            
         if ls == 'on':
             derphi0 = -float(y @ y) #or could be written with pk with a factor l/d. 
-            alpha_k, nfev, phi1 = linesearch(f, x, pk, derphi0, old_fval=fval,alpha0=max(alpha0, amin), amin=amin)
+            alpha_ls, nfev, phi1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
             #if search failed
-            if alpha_k is None:
-                alpha_k = 1e-8
-                phi1 = float(f(x + alpha_k * pk))
-                alpha0 = alpha_k
+            if alpha_ls is None:
+                alpha_ls = 1e-8
+                phi1 = old_fval + alpha_ls*derphi0
+                alpha0 = alpha_ls
             else:
-                alpha0 = 2.2 * alpha_k
-            stepsize_history.append(alpha_k)
-            x = x + alpha_k * pk
+                alpha0 = 2.2 * alpha_ls #otherwise the armijo algo simply return alpha0
+            stepsize_history.append(alpha_ls)
+            x = x + alpha_ls * pk
             fval = phi1
         elif ls == 'off':
             x = x + alpha_nols * pk
             fval = float(f(x))
+        else:
+            raise ValueError ("Please choose linesearch mode.")
         
         #plug x into function
-        fx.append(fval)
+        fx_history.append(fval)
         x_history.append(np.array(x))
 
-    return np.array(fx), np.array(x_history), np.array(stepsize_history)
+    return np.array(fx_history), np.array(x_history), np.array(stepsize_history)
