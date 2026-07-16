@@ -1,8 +1,9 @@
-def lambda_max(hvp, dim, rng, iters=30):
-    v = rng.standard_normal(dim); v /= np.linalg.norm(v)
+def estimate_L(p, iters=30, seed=0):
+    rng = np.random.default_rng(seed)
+    v = rng.standard_normal(p.n); v /= np.linalg.norm(v)
     lam = 0.0
     for _ in range(iters):
-        w = hvp(v)
+        w = p.hprod(v, x=p.x0)
         lam = v @ w
         nw = np.linalg.norm(w)
         if nw == 0: break
@@ -42,7 +43,7 @@ def linesearch(f, xk, pk, derphi0, old_fval=None, alpha0 = 1.0, c1=1e-4, amin=1e
 #input alpha and l, independent variables
 #0 < alpha < 2l/(d*lambda) 
 
-def ssd(f, gradf, x, l = None, ls=None, max_iter=500, seed=0, amin = 1e-6):
+def ssd(f, gradf, x, l = None, ls=None, max_iter=500, seed=0, amin = 1e-6, L=None):
     '''
     followed algorithm 2.1:
     1: Inputs: α, l. step size, subspace rank
@@ -82,17 +83,17 @@ def ssd(f, gradf, x, l = None, ls=None, max_iter=500, seed=0, amin = 1e-6):
     rng = np.random.default_rng(seed)
     alpha0 = float(l)/dim
 
-    #computing optimal stepsize for fixed step
-    hvp = lambda v: p.hprod(v, x=x)
-    L = lambda_max(hvp, dim, np.random.default_rng(seed + 1))
-    alpha_nols = l / (dim * L)
+    if ls == 'off' and L is None:
+        raise ValueError("ls='off' requires L")
+    if ls == 'off':
+        alpha_nols = l / (dim * max(L, 1e-16))
     
     for n in range(max_iter):
         grad = gradf(x)
 
         if l == dim: #simply gradient descent
-            Q = np.eye(dim)
-            pk = y = grad
+            y = grad
+            pk = -grad
         else:
             Z = rng.standard_normal((dim, l))
             Q, _ = linalg.qr(Z, mode='economic') #economic mode for finding the QR so it's not a full square matrix
@@ -105,9 +106,7 @@ def ssd(f, gradf, x, l = None, ls=None, max_iter=500, seed=0, amin = 1e-6):
             alpha_ls, nfev, phi1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
             #if search failed
             if alpha_ls is None:
-                alpha_ls = 1e-8
-                phi1 = old_fval + alpha_ls*derphi0
-                alpha0 = alpha_ls
+                alpha_ls, phi1 = 0.0, fval    # null step; fresh subspace next iteration
             else:
                 alpha0 = 2.2 * alpha_ls #otherwise the armijo algo simply return alpha0
             stepsize_history.append(alpha_ls)
@@ -122,5 +121,73 @@ def ssd(f, gradf, x, l = None, ls=None, max_iter=500, seed=0, amin = 1e-6):
         #plug x into function
         fx_history.append(fval)
         x_history.append(np.array(x))
+
+    return np.array(fx_history), np.array(x_history), np.array(stepsize_history)
+
+####################################################################################
+
+# Gauss-Newton SSD
+def gn_ssd(x, cons, l=None, ls=None, max_iter=200, seed=0, amin=1e-10):
+    '''
+    input: x is the starting point; P is dxl; r the residual function
+    Q has Haar distribution
+    Assume alpha = 1
+    iteration: x = P
+    '''
+
+    dim = len(x)
+    rng = np.random.default_rng(seed)
+
+    #return variables
+    x_history = []
+    fx_history = []
+    stepsize_history = []
+
+    #subspace dimension
+    dim = len(x)
+    if l is None:
+        # default choice for subspace:
+        l = min([max([5, int(np.sqrt(dim)) ]), dim])
+    if l > dim: raise ValueError('subspace dim should be < dimension')
+    if l == dim: print(' Are you sure you want l == dim?')
+
+    #problem setup 
+    def fobj(y):                      # scalar objective for the line search
+        ry = cons(y)                  # residual only, no Jacobian
+        return 0.5 * np.dot(ry, ry)
+
+    alpha0 = 1.0
+    
+    for n in range(max_iter):
+        r , J = cons(x, gradient=True) #residual and Jacobian
+        fval = 0.5 * np.dot(r, r)
+        
+        Z = rng.standard_normal((dim, l))
+        Q, _ = linalg.qr(Z, mode='economic') #economic mode for finding the QR so it's not a full square matrix
+
+        #solving for the step
+        J_tild = J @ Q
+        pk = np.linalg.lstsq(J_tild, - r, rcond=None)[0]
+
+        if ls == 'on':
+            derphi0 = (J_tild.T @ r) @ pk
+            direc = Q @ pk
+            alpha_ls, nfev, phi1 = linesearch(fobj, x, direc, derphi0, old_fval=fval,alpha0=max(alpha0, amin), amin=amin)
+            #if it fails
+            if alpha_ls is None: 
+                alpha_ls, phi1 = 0.0, fval
+            else:
+                alpha0 = 2.5 * alpha_ls
+            stepsize_history.append(alpha_ls)
+            fval = phi1
+            x = x + alpha_ls * direc
+        elif ls == 'off': #alpha = 1
+            x = x + Q @ pk
+            fval = float(fval)
+        else:
+            raise ValueError("please choose linesearch mode.")
+
+        x_history.append(np.array(x))
+        fx_history.append(fval)
 
     return np.array(fx_history), np.array(x_history), np.array(stepsize_history)
