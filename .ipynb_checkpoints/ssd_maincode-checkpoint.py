@@ -68,8 +68,17 @@ def counted(fn):
     wrapped.reset = lambda: calls.__setitem__(0, 0)
     return wrapped
 
-def double_ls(func, phi0, pk, eta_max, z, x0, v1, v2, h):
+#double linesearch
+def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h):
     '''
+    func: function
+    phi0: last function evaluation
+    pk: P P.T gradF 
+    x, y: two variables in phi
+    z: continuously updating gradient
+    v1, v2: two directions in phi
+    h: precision of finite difference
+    
     f00: f(x) = phi(0, 0)
     pk = Q Q.T gradf
     c = coefficients of the quadratic
@@ -80,16 +89,16 @@ def double_ls(func, phi0, pk, eta_max, z, x0, v1, v2, h):
     delphi1 = - pk @ pk
     zTgradf = (func(x0 + h*z) - phi0 )/ h #+1
     delphi2 = - zTgradf - z.T @ pk #pk is negative
-    phimax0 = phi(eta_max, 0) #+1
-    phi0max = phi(0, eta_max) #+1
-    phimaxmax = phi(eta_max, eta_max) #+1
+    phix0 = phi(x, 0) #+1
+    phi0y = phi(0, y) #+1
+    phixy = phi(x, y) #+1
 
     c = phi00
     b1 = delphi1
     b2 = delphi2
-    a11 = 2*(phimax0 - delphi1 * eta_max - phi00) / (eta_max**2)
-    a22 = 2*(phi0max - delphi2 * eta_max - phi00) / (eta_max**2)
-    a12 = (phimaxmax - (a11 + a22) * 1/2 * eta_max**2 - (b1 + b2)*eta_max - c) / (eta_max**2)
+    a11 = 2*(phix0 - delphi1 * x - phi00) / (x**2)
+    a22 = 2*(phi0y - delphi2 * y - phi00) / (y**2)
+    a12 = (phixy - 1/2(a11 * x**2 - a22 * y**2) - b1 * x - b2 * y - c) / (a*b)
 
     A = np.array([[a11, a12], [a12, a22]])
     b = np.array([b1, b2])
@@ -97,7 +106,7 @@ def double_ls(func, phi0, pk, eta_max, z, x0, v1, v2, h):
     f = lambda eta: (1/2)*eta.T @ A @ eta + b.T @ eta + c
     new_eta = np.linalg.solve(A, -b) #newton one step for quadratic
     phi1 = phi(new_eta[0], new_eta[1]) #+1
-    print(np.linalg.eigvals(A))
+    # print(np.linalg.eigvals(A))
     return new_eta, phi1
 
 def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin = 1e-6, L=None, 
