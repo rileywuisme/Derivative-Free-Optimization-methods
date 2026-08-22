@@ -136,6 +136,8 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
     8/22/2026 note: for comparison purposes have saga0 as the original saga inspired algorithm with only eta_max as the input
                     saga1 does 1D linesearch in both directions, input x = alpha1, y = alpha2, 
                     (alpha is the stepsize) then double_ls to find the minimum. 
+                    saga2 has an initialized eta1 and eta2, then update the eta with the previous eta
+                    saga3 is similar to saga2, but the initialized etas are from 1d linesearch. A combo of saga1 and saga2.
     '''
     #initialize function call wrapper
     f = counted(obj)
@@ -165,6 +167,22 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
         x_pert = x.copy()
         x_pert[n] += h
         z[n] = (f(x_pert) - fval) / h
+    #for saga2, initialize the first eta1 and eta2
+    if ls == 'saga2':
+        new_eta = [0.005, 0.005]
+    elif ls == 'saga3':
+        Z = rng.standard_normal((dim, l))
+        G = Z.T @ Z
+        R = np.linalg.cholesky(G)
+        P = linalg.solve_triangular(R, Z.T, lower=True).T
+        PT_times_grad = finite_diff_directional_deriv(x,f,fval, P.T, h=h)
+        derphi0 = -float(PT_times_grad @ PT_times_grad)
+        pk = - P @ PT_times_grad
+        eta1, _, _ = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
+        gfk = approx_fprime(x, f, 1e-6) #cheating for now
+        v2 = z - P @ (P.T @ z)
+        eta2, _, _ = line_search_armijo(f, x, v2, gfk, old_fval=fval)
+        new_eta = [eta1, eta2]
 
     #computing best alpha for fixed stepsize
     if ls == 'off' and L is None:
@@ -248,17 +266,17 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
         elif ls == 'saga0':
             v1 = - pk
             v2 = z - P @ (P.T @ z)
-            new_eta, phi1 = double_ls(f, fval, pk, 0.0005, 0.0005, z, x, v1, v2, h)
+            new_eta, phi1 = double_ls(f, fval, pk, 0.005, 0.005, z, x, v1, v2, h)
             x = x - new_eta[0] * v1 - new_eta[1] * v2
             z = v2 - pk
             fval = float(f(x)) #make sure phi1 = fval
             stepsize_history.append((new_eta))
         elif ls == 'saga1':
-            v1 = - pk
+            v1 = - pk #it's positive pk here, first negative sign on line 202. 
             v2 = z - P @ (P.T @ z) # more efficient
             derphi0 = -float(PT_times_grad @ PT_times_grad)
             eta1, _, _ = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-            gfk = approx_fprime(x, f, 1e-6)  #cheating for now
+            gfk = approx_fprime(x, f, 1e-6) #cheating for now
             eta2, _, _ = line_search_armijo(f, x, v2, gfk, old_fval=fval)
             new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
             # TODO: generalize double_ls so that instead of (0,0), (0,eta_max), (eta_max,0) and (eta_max,eta_max)
@@ -270,6 +288,26 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             # (Can both ideas be combined?)
             x = x - new_eta[0] * v1 - new_eta[1] * v2
             #calculating z as a difference of past grad
+            z = v2 - pk
+            fval = float(f(x)) #make sure phi1 = fval
+            stepsize_history.append((new_eta))
+        elif ls == 'saga2':
+            v1 = - pk
+            v2 = z - P @ (P.T  @ z)
+            eta1 = max(abs(2*new_eta[0]), 1e-8)
+            eta2 = max(abs(2*new_eta[1]), 1e-8)
+            new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
+            x = x - new_eta[0] * v1 - new_eta[1] * v2
+            z = v2 - pk
+            fval = float(f(x)) #make sure phi1 = fval
+            stepsize_history.append((new_eta))
+        elif ls == 'saga3':
+            v1 = - pk
+            v2 = z - P @ (P.T  @ z)
+            eta1 = max(abs(2*new_eta[0]), 1e-8)
+            eta2 = max(abs(2*new_eta[1]), 1e-8)
+            new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
+            x = x - new_eta[0] * v1 - new_eta[1] * v2
             z = v2 - pk
             fval = float(f(x)) #make sure phi1 = fval
             stepsize_history.append((new_eta))
