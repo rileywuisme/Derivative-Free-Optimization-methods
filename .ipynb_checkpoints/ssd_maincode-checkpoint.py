@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize._linesearch import scalar_search_armijo
-from scipy.optimize import root
-from scipy.optimize import rosen, rosen_der
+from scipy.optimize import approx_fprime
+from scipy.optimize._linesearch import line_search_armijo
 import pycutest
 import time
 
@@ -87,7 +87,7 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h):
         return func(x0 - eta1 * v1 - eta2 * v2)
     phi00 = phi0
     delphi1 = - pk @ pk
-    zTgradf = (func(x0 + h*z) - phi0 )/ h #+1
+    zTgradf = (func(x0 + h*z) - phi00 )/ h #+1
     delphi2 = - zTgradf - z.T @ pk #pk is negative
     phix0 = phi(x, 0) #+1
     phi0y = phi(0, y) #+1
@@ -96,9 +96,10 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h):
     c = phi00
     b1 = delphi1
     b2 = delphi2
+    #task: look for ways to limit numerical error in the coeficient calculations
     a11 = 2*(phix0 - delphi1 * x - phi00) / (x**2)
     a22 = 2*(phi0y - delphi2 * y - phi00) / (y**2)
-    a12 = (phixy - 1/2(a11 * x**2 - a22 * y**2) - b1 * x - b2 * y - c) / (a*b)
+    a12 = (phixy - 1/2 * (a11 * x**2 - a22 * y**2) - b1 * x - b2 * y - c) / (x*y)
 
     A = np.array([[a11, a12], [a12, a22]])
     b = np.array([b1, b2])
@@ -110,7 +111,7 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h):
     return new_eta, phi1
 
 def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin = 1e-6, L=None, 
-        alpha_max=10, qr = 'cholesky', eta_max = None, h=1e-8):
+        alpha_max=10, qr = 'cholesky', h=1e-8):
     '''
     Parameters:
     f: objective function
@@ -132,6 +133,9 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
     stepsize_history: an array of history of stepsize
 
     7/21/2026 note: change from max_iter to max_fn_call
+    8/22/2026 note: for comparison purposes have saga0 as the original saga inspired algorithm with only eta_max as the input
+                    saga1 does 1D linesearch in both directions, input x = alpha1, y = alpha2, 
+                    (alpha is the stepsize) then double_ls to find the minimum. 
     '''
     #initialize function call wrapper
     f = counted(obj)
@@ -241,13 +245,22 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             fval_prev = fval
             fval = float(f(x))
             stepsize_history.append(alpha_bb)
-        elif ls == 'saga':
+        elif ls == 'saga0':
             v1 = - pk
-            # v2 = (np.eye(dim) - P @ P.T) @ z
+            v2 = z - P @ (P.T @ z)
+            new_eta, phi1 = double_ls(f, fval, pk, 0.0005, 0.0005, z, x, v1, v2, h)
+            x = x - new_eta[0] * v1 - new_eta[1] * v2
+            z = v2 - pk
+            fval = float(f(x)) #make sure phi1 = fval
+            stepsize_history.append((new_eta))
+        elif ls == 'saga1':
+            v1 = - pk
             v2 = z - P @ (P.T @ z) # more efficient
-            if eta_max is None:
-                raise ValueError("eta_max is required for SAGA-SSD.")
-            new_eta, phi1 = double_ls(f, fval, pk, eta_max, z, x, v1, v2, h)
+            derphi0 = -float(PT_times_grad @ PT_times_grad)
+            eta1, _, _ = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
+            gfk = approx_fprime(x, f, 1e-6)  #cheating for now
+            eta2, _, _ = line_search_armijo(f, x, v2, gfk, old_fval=fval)
+            new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
             # TODO: generalize double_ls so that instead of (0,0), (0,eta_max), (eta_max,0) and (eta_max,eta_max)
             #    it takes in (0,0), (eta_0,0), (0,eta_1), (eta01,eta10) 
             # TODO: (1 idea)
@@ -257,8 +270,6 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             # (Can both ideas be combined?)
             x = x - new_eta[0] * v1 - new_eta[1] * v2
             #calculating z as a difference of past grad
-            # z = z - pk - (P @ P.T) @ z.T
-            # z = z - pk - P @ (P.T @ z)
             z = v2 - pk
             fval = float(f(x)) #make sure phi1 = fval
             stepsize_history.append((new_eta))
