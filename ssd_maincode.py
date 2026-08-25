@@ -102,6 +102,8 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h):
     a12 = (phixy - 1/2 * (a11 * x**2 - a22 * y**2) - b1 * x - b2 * y - c) / (x*y)
 
     A = np.array([[a11, a12], [a12, a22]])
+    if not np.all(np.isfinite(A)):
+        return None, None
     if np.linalg.cond(A) > 1e12:
         return None, None
     b = np.array([b1, b2])
@@ -109,7 +111,7 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h):
     f = lambda eta: (1/2)*eta.T @ A @ eta + b.T @ eta + c
     new_eta = np.linalg.solve(A, -b) #newton one step for quadratic
     phi1 = phi(new_eta[0], new_eta[1]) #+1
-    if phi1 >= phi00:
+    if phi1 >= phi00: #means next step is going to increase instead of decrease
         return None, None
     # print(np.linalg.eigvals(A))
     return new_eta, phi1
@@ -275,7 +277,7 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
 
             variant = ls[4:] #the number
             if variant == '0':
-                new_eta, phi1 = double_ls(f, fval, pk, eta_init, eta_init, z, x, v1, v2, h)
+                eta1 = eta2 = eta_init
             if variant == '1':
                 v1 = - pk #it's positive pk here, first negative sign on line 202. 
                 v2 = z - P @ (P.T @ z) # more efficient
@@ -284,39 +286,37 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                 eta1, _, _ = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
                 derphi0_v2 = (f(x + h*v2) - fval) / h
                 eta2, _, _ = linesearch(f, x, -v2, derphi0_v2, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-                new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
-                # TODO: generalize double_ls so that instead of (0,0), (0,eta_max), (eta_max,0) and (eta_max,eta_max)
-                #    it takes in (0,0), (eta_0,0), (0,eta_1), (eta01,eta10) 
-                # TODO: (1 idea)
-                # eta_0 = 2*new_eta[0] (from previous iteration), eta_1 = ...
-                # new_eta, phi1 = double_ls(f, fval, pk, eta_0, eta_1, z, x, v1, v2, h)
-                # (other idea: do 2 separate 1D linesearches to find eta_0 and eta_1, *then* do 2D linesearch with these as starting guesses)
-                # (Can both ideas be combined?)
-            if variant == '2':
+            if variant == '2' or variant == '3':
                 v1 = - pk
                 v2 = z - P @ (P.T  @ z)
                 eta1 = max(abs(2*new_eta[0]), 1e-8)
                 eta2 = max(abs(2*new_eta[1]), 1e-8)
-                new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
-            if variant == '3':
-                v1 = - pk
-                v2 = z - P @ (P.T  @ z)
-                #2 * new_eta can be negative or zero
-                eta1 = max(abs(2*new_eta[0]), 1e-8)
-                eta2 = max(abs(2*new_eta[1]), 1e-8)
-                new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
                 
-            if new_eta is None: 
-                new_eta = [eta_init, eta_init]
+            if eta1 is not None and eta2 is not None:
+                new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
+                if new_eta is None: #safeguard from double_ls return None
+                    new_eta = [eta_init, eta_init]
+                    x_history.append(np.array(x))
+                    fx_history.append(fval)
+                    fn_call_history.append(f.calls[0])
+                    continue
+            elif eta1 is not None:
+                # only v1 direction succeeded, 1D step along v1
+                new_eta = [eta1, 0.0] #no safeguard for ascend
+            elif eta2 is not None:
+                # only v2 direction succeeded, 1D step along v2
+                new_eta = [0.0, eta2]
+            else:
+                new_eta = None
                 x_history.append(np.array(x))
                 fx_history.append(fval)
                 fn_call_history.append(f.calls[0])
                 continue
-            else:
-                x = x - new_eta[0] * v1 - new_eta[1] * v2
-                z = v2 - pk
-                fval = float(f(x)) #make sure phi1 = fval
-                stepsize_history.append((new_eta))
+            x = x - new_eta[0] * v1 - new_eta[1] * v2
+            z = v2 - pk
+            fval = float(f(x))
+            stepsize_history.append((new_eta))
+                
         elif ls == 'off':
             x = x + alpha_nols * pk
             fval = float(f(x))
