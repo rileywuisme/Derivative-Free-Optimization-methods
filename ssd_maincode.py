@@ -168,11 +168,12 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
     fval_prev = fval
 
     #for saga algo
-    z = np.zeros(dim)
-    for n in range(dim): #+1
-        x_pert = x.copy()
-        x_pert[n] += h
-        z[n] = (f(x_pert) - fval) / h
+    if ls.startswith('saga'):
+        z = np.zeros(dim)
+        for n in range(dim): #+1
+            x_pert = x.copy()
+            x_pert[n] += h
+            z[n] = (f(x_pert) - fval) / h
     #for saga2, initialize the first eta1 and eta2
     if ls == 'saga2':
         new_eta = [eta_init, eta_init]
@@ -199,7 +200,10 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
         alpha_nols = l / (dim * max(L, 1e-16))
     
     while f.calls[0] <= max_fn_call:      
-        
+
+        #first step "saga":
+        #if z is useful, skip the following steps and find a stepsize using armijo/polyak
+        #if z is useless, do the following steps and still use armijo/polyak
         if l == dim: #simply gradient descent
             if gradf is None:
                 raise ValueError(f"l == dim == {dim} requires gradf (dim too small for sketching)")
@@ -291,7 +295,8 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                 v2 = z - P @ (P.T  @ z)
                 eta1 = max(abs(2*new_eta[0]), 1e-8)
                 eta2 = max(abs(2*new_eta[1]), 1e-8)
-                
+
+            #record failure times
             if eta1 is not None and eta2 is not None:
                 new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
                 if new_eta is None: #safeguard from double_ls return None
