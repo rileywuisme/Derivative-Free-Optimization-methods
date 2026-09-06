@@ -177,19 +177,12 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
     #for saga2, initialize the first eta1 and eta2
     if ls == 'saga2':
         new_eta = [eta_init, eta_init]
-    elif ls == 'saga3':
-        Z = rng.standard_normal((dim, l))
-        G = Z.T @ Z
-        R = np.linalg.cholesky(G)
-        P = linalg.solve_triangular(R, Z.T, lower=True).T
-        PT_times_grad = finite_diff_directional_deriv(x,f,fval, P.T, h=h)
-        derphi0 = -float(PT_times_grad @ PT_times_grad)
-        pk = - P @ PT_times_grad
-        v2 = z - P @ (P.T @ z)
+    elif ls == 'saga3' or ls == 'saga1':
+        #have the first descent in direction z
+        pk = - z
+        derphi0 = -float(z @ z)
         eta1, _, _ = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-        derphi0_v2 = (f(x + h*v2) - fval) / h
-        eta2, _, _ = linesearch(f, x, v2, derphi0_v2, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-        new_eta = [eta1, eta2]
+        new_eta = [eta1, eta1]
         if new_eta is None: #fallback to when saga3 doesn't work, it's essentially saga2
             new_eta = [eta_init, eta_init]
 

@@ -170,26 +170,19 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
     #for saga algo
     if ls.startswith('saga'):
         z = np.zeros(dim)
-        # for n in range(dim): #+1
-        #     x_pert = x.copy()
-        #     x_pert[n] += h
-        #     z[n] = (f(x_pert) - fval) / h
+        for n in range(dim): #+1
+            x_pert = x.copy()
+            x_pert[n] += h
+            z[n] = (f(x_pert) - fval) / h
     #for saga2, initialize the first eta1 and eta2
     if ls == 'saga2':
         new_eta = [eta_init, eta_init]
-    elif ls == 'saga3':
-        Z = rng.standard_normal((dim, l))
-        G = Z.T @ Z
-        R = np.linalg.cholesky(G)
-        P = linalg.solve_triangular(R, Z.T, lower=True).T
-        PT_times_grad = finite_diff_directional_deriv(x,f,fval, P.T, h=h)
-        derphi0 = -float(PT_times_grad @ PT_times_grad)
-        pk = - P @ PT_times_grad
-        v2 = z - P @ (P.T @ z)
+    elif ls == 'saga3' or ls == 'saga1':
+        #have the first descent in direction z
+        pk = - z
+        derphi0 = -float(z @ z)
         eta1, _, _ = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-        derphi0_v2 = (f(x + h*v2) - fval) / h
-        eta2, _, _ = linesearch(f, x, v2, derphi0_v2, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-        new_eta = [eta1, eta2]
+        new_eta = [eta1, eta1]
         if new_eta is None: #fallback to when saga3 doesn't work, it's essentially saga2
             new_eta = [eta_init, eta_init]
 
@@ -200,7 +193,10 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
         alpha_nols = l / (dim * max(L, 1e-16))
     
     while f.calls[0] <= max_fn_call:      
-        
+
+        #first step "saga":
+        #if z is useful, skip the following steps and find a stepsize using armijo/polyak
+        #if z is useless, do the following steps and still use armijo/polyak
         if l == dim: #simply gradient descent
             if gradf is None:
                 raise ValueError(f"l == dim == {dim} requires gradf (dim too small for sketching)")
@@ -292,7 +288,8 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                 v2 = z - P @ (P.T  @ z)
                 eta1 = max(abs(2*new_eta[0]), 1e-8)
                 eta2 = max(abs(2*new_eta[1]), 1e-8)
-                
+
+            #record failure times
             if eta1 is not None and eta2 is not None:
                 new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
                 if new_eta is None: #safeguard from double_ls return None
