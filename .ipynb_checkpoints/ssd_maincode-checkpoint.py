@@ -117,7 +117,7 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h):
     return new_eta, phi1
 
 def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin = 1e-6, L=None, 
-        alpha_max=10, qr = 'cholesky', h=1e-8, eta_init=0.005):
+        alpha_max=10, qr = 'cholesky', h=1e-8, eta_init=0.005, z_init = None):
     '''
     Parameters:
     f: objective function
@@ -169,34 +169,30 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
 
     #for saga algo
     if ls.startswith('saga'):
-        z = np.zeros(dim)
-        for n in range(dim): #+1
-            x_pert = x.copy()
-            x_pert[n] += h
-            z[n] = (f(x_pert) - fval) / h
-    #for saga2, initialize the first eta1 and eta2
-    if ls == 'saga2':
-        new_eta = [eta_init, eta_init]
-    elif ls == 'saga3' or ls == 'saga1':
-        #have the first descent in direction z
-        pk = - z
-        derphi0 = -float(z @ z)
-        eta1, _, _ = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-        new_eta = [eta1, eta1]
-        if new_eta is None: #fallback to when saga3 doesn't work, it's essentially saga2
-            new_eta = [eta_init, eta_init]
+        z = np.zeros(dim) #when z is useless
+        if z_init == 'grad': #when z is useful
+            for n in range(dim): #+1
+                x_pert = x.copy()
+                x_pert[n] += h
+                z[n] = (f(x_pert) - fval) / h
 
     #computing best alpha for fixed stepsize
     if ls == 'off' and L is None:
         raise ValueError("ls='off' requires L")
     if ls == 'off':
         alpha_nols = l / (dim * max(L, 1e-16))
+
+    first_step = True
+    new_eta = [eta_init, eta_init]
+    failed_one = 0
+    failed_both = 0
     
     while f.calls[0] <= max_fn_call:      
 
         #first step "saga":
         #if z is useful, skip the following steps and find a stepsize using armijo/polyak
         #if z is useless, do the following steps and still use armijo/polyak
+        
         if l == dim: #simply gradient descent
             if gradf is None:
                 raise ValueError(f"l == dim == {dim} requires gradf (dim too small for sketching)")
@@ -223,9 +219,26 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                 grad = gradf(x)
                 PT_times_grad = P.T @ grad
             pk = - P @ PT_times_grad
-            
-        # Assuming we are not doing finite differences, need to update counter manually
-        # Ideally we also update the internal counter of the pycutest class...
+
+        if ls.startswith('saga') and first_step and np.any(z):
+            pk = -z
+            derphi0 = -float(z @ z)
+            alpha, _, phi1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
+            x = x + (alpha or 0.0) * pk
+            fval = phi1 if alpha is not None else fval
+            first_step = False
+            # z stays the gradient → v2 = z - P Pᵀ z is nonzero next iter, double_ls works
+            # record history, continue
+            continue
+        if ls.startswith('saga') and first_step:
+            derphi0 = -float(PT_times_grad @ PT_times_grad)
+            alpha, _, phi1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
+            x = x + (alpha or 0.0) * pk
+            fval = phi1 if alpha is not None else fval
+            z = -pk # now informative so double_ls has a real v2 next iter
+            first_step = False
+            # record history, continue
+            continue
         
         if ls == 'armijo':
             derphi0 = -float(PT_times_grad @ PT_times_grad)
@@ -289,7 +302,6 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                 eta1 = max(abs(2*new_eta[0]), 1e-8)
                 eta2 = max(abs(2*new_eta[1]), 1e-8)
 
-            #record failure times
             if eta1 is not None and eta2 is not None:
                 new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
                 if new_eta is None: #safeguard from double_ls return None
@@ -301,19 +313,22 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             elif eta1 is not None:
                 # only v1 direction succeeded, 1D step along v1
                 new_eta = [eta1, 0.0] #no safeguard for ascend
+                failed_one += 1
             elif eta2 is not None:
                 # only v2 direction succeeded, 1D step along v2
                 new_eta = [0.0, eta2]
+                failed_one += 1
             else:
                 new_eta = None
                 x_history.append(np.array(x))
                 fx_history.append(fval)
                 fn_call_history.append(f.calls[0])
+                failed_both = 0
                 continue
             x = x - new_eta[0] * v1 - new_eta[1] * v2
             z = v2 - pk
             fval = float(f(x))
-            stepsize_history.append((new_eta))
+            stepsize_history.append(new_eta)
                 
         elif ls == 'off':
             x = x + alpha_nols * pk
@@ -326,4 +341,4 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
         fx_history.append(fval)
         fn_call_history.append(f.calls[0])
 
-    return np.array(x_history), np.array(fx_history), np.array(stepsize_history), np.array(fn_call_history)
+    return np.array(x_history), np.array(fx_history), np.array(stepsize_history), np.array(fn_call_history), failed_one + failed_both
