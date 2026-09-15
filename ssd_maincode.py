@@ -192,11 +192,21 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
         #first step "saga":
         #if z is useful, skip the following steps and find a stepsize using armijo/polyak
         #if z is useless, do the following steps and still use armijo/polyak
+        if ls.startswith('saga') and first_step and np.any(z):
+            pk = -z
+            derphi0 = -float(z @ z)
+            alpha, _, phi1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
+            x = x + (alpha or 0.0) * pk
+            fval = phi1 if alpha is not None else fval
+            first_step = False
+            # z stays the gradient → v2 = z - P Pᵀ z is nonzero next iter, double_ls works
+            # record history, continue
+            continuex
         
         if l == dim: #simply gradient descent
             if gradf is None:
                 raise ValueError(f"l == dim == {dim} requires gradf (dim too small for sketching)")
-            grad = gradf(x) 
+            grad = gradf(x)
             PT_times_grad = grad
             pk = -grad
             print('l = dim, gradient descent mode, SSD not engaged. ')
@@ -220,16 +230,6 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                 PT_times_grad = P.T @ grad
             pk = - P @ PT_times_grad
 
-        if ls.startswith('saga') and first_step and np.any(z):
-            pk = -z
-            derphi0 = -float(z @ z)
-            alpha, _, phi1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-            x = x + (alpha or 0.0) * pk
-            fval = phi1 if alpha is not None else fval
-            first_step = False
-            # z stays the gradient → v2 = z - P Pᵀ z is nonzero next iter, double_ls works
-            # record history, continue
-            continue
         if ls.startswith('saga') and first_step:
             derphi0 = -float(PT_times_grad @ PT_times_grad)
             alpha, _, phi1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
@@ -289,16 +289,12 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             if variant == '0':
                 eta1 = eta2 = eta_init
             if variant == '1':
-                v1 = - pk #it's positive pk here, first negative sign on line 202. 
-                v2 = z - P @ (P.T @ z) # more efficient
                 derphi0 = -float(PT_times_grad @ PT_times_grad)
                 #eta1 and eta2 could be None (part of scipy's algo), need safeguards.
                 eta1, _, _ = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
                 derphi0_v2 = (f(x + h*v2) - fval) / h
                 eta2, _, _ = linesearch(f, x, -v2, derphi0_v2, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
             if variant == '2' or variant == '3':
-                v1 = - pk
-                v2 = z - P @ (P.T  @ z)
                 eta1 = max(abs(2*new_eta[0]), 1e-8)
                 eta2 = max(abs(2*new_eta[1]), 1e-8)
 
