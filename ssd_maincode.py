@@ -117,7 +117,12 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h):
     return new_eta, phi1
 
 def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin = 1e-6, L=None, 
-        alpha_max=10, qr = 'cholesky', h=1e-8, eta_init=0.005, z_init = None):
+        alpha_max=10, qr = 'cholesky', h=1e-8, eta_init=0.005, z_init = None, debug=False):
+    #'debug mode so I get info when a corner case arise. '
+    #when debugging, find how far z differs from gradient. How much z correlates with gradient
+    #how much better is it to use z than gradient
+    #find reasons why it's working/not working
+    #trivial reason: extra computation isn't worth it (double_ls). 
     '''
     Parameters:
     f: objective function
@@ -201,7 +206,7 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             first_step = False
             # z stays the gradient → v2 = z - P Pᵀ z is nonzero next iter, double_ls works
             # record history, continue
-            continuex
+            continue
         
         if l == dim: #simply gradient descent
             if gradf is None:
@@ -299,6 +304,8 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                 eta2 = max(abs(2*new_eta[1]), 1e-8)
 
             if eta1 is not None and eta2 is not None:
+                #understand why it fails
+                #save input of double_ls to see when it fails
                 new_eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h)
                 if new_eta is None: #safeguard from double_ls return None
                     new_eta = [eta_init, eta_init]

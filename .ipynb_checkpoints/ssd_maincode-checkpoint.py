@@ -201,7 +201,7 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             first_step = False
             # z stays the gradient → v2 = z - P Pᵀ z is nonzero next iter, double_ls works
             # record history, continue
-            continuex
+            continue
         
         if l == dim: #simply gradient descent
             if gradf is None:
