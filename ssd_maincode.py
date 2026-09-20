@@ -99,12 +99,14 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h):
     #task: look for ways to limit numerical error in the coeficient calculations
     a11 = 2*(phix0 - delphi1 * x - phi00) / (x**2)
     a22 = 2*(phi0y - delphi2 * y - phi00) / (y**2)
-    a12 = (phixy - 1/2 * (a11 * x**2 - a22 * y**2) - b1 * x - b2 * y - c) / (x*y)
+    a12 = (phixy - 1/2 * (a11 * x**2 + a22 * y**2) - b1 * x - b2 * y - c) / (x*y)
 
     A = np.array([[a11, a12], [a12, a22]])
     if not np.all(np.isfinite(A)):
+        print("there's an infinite term in matrix A")
         return None, None
     if np.linalg.cond(A) > 1e12:
+        print("A is singular")
         return None, None
     b = np.array([b1, b2])
 
@@ -312,6 +314,7 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                     x_history.append(np.array(x))
                     fx_history.append(fval)
                     fn_call_history.append(f.calls[0])
+                    stepsize_history.append(new_eta)
                     continue
             elif eta1 is not None:
                 # only v1 direction succeeded, 1D step along v1
