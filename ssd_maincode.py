@@ -207,7 +207,10 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             fval = phi1 if alpha is not None else fval
             first_step = False
             # z stays the gradient → v2 = z - P Pᵀ z is nonzero next iter, double_ls works
-            # record history, continue
+            x_history.append(np.array(x))
+            fx_history.append(fval)
+            fn_call_history.append(f.calls[0])
+            stepsize_history.append(new_eta)
             continue
         
         if l == dim: #simply gradient descent
@@ -244,7 +247,10 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             fval = phi1 if alpha is not None else fval
             z = -pk # now informative so double_ls has a real v2 next iter
             first_step = False
-            # record history, continue
+            x_history.append(np.array(x))
+            fx_history.append(fval)
+            fn_call_history.append(f.calls[0])
+            stepsize_history.append(new_eta)
             continue
         
         if ls == 'armijo':
