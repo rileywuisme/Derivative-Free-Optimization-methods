@@ -101,7 +101,7 @@ def counted(fn):
     return wrapped
 
 #double linesearch
-def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h, debug=False):
+def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h, d2, debug=False):
     '''
     Quadratic model of phi(eta1, eta2) = func(x0 - eta1*v1 - eta2*v2), fitted from
     phi(0,0), the gradient of phi at 0, and the stepsize values phi(x,0), phi(0,y), phi(x,y).
@@ -120,7 +120,7 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h, debug=False):
         return func(x0 - eta1 * v1 - eta2 * v2)
     phi00 = phi0
     b1 = - pk @ pk # d phi/d eta1 at 0
-    b2 = - dir_deriv(func, x0, phi00, z, h) - z @ pk   # d phi/d eta2 at 0  #+1
+    b2 = - d2
     phix0 = phi(x, 0) #+1
     phi0y = phi(0, y) #+1
     phixy = phi(x, y) #+1
@@ -170,7 +170,7 @@ def ls_trial_steps(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h):
         a2, _, phi_a2 = linesearch(f, x, sgn * v2, -abs(d2), old_fval=fval, alpha0=max(alpha0, amin2), amin=amin2)
         if a2 is not None:
             eta2, phi_e2 = -sgn * a2, phi_a2 # x + a2*sgn*v2 = x - eta2*v2
-    return eta1, phi_e1, eta2, phi_e2
+    return eta1, phi_e1, eta2, phi_e2, d2
 
 def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin = 1e-6, L=None, 
         alpha_max=10, qr = 'cholesky', h=1e-8, eta_init=0.005, min_trial_step_norm=1e-5, z_init = None, debug=False):
@@ -252,7 +252,7 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                 x_pert = x.copy()
                 x_pert[i] += h
                 z[i] = (f(x_pert) - fval) / h
-            record(zero_step) # marks the cost of the gradient initialization
+            record(zero_step) # record the cost of the gradient initialization
 
     first_step = True
     new_eta = None   # previous (eta1, eta2); None means (re)initialize the stepsize
@@ -365,22 +365,23 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             step = [0.0, 0.0]
 
             if n2 <= 1e-12 * n1:
-                # v2 adds no direction: 1D Armijo step along pk
+                #v2 adds no direction: 1D Armijo step along pk
                 use_2d = False
                 derphi0 = -float(PT_times_grad @ PT_times_grad)
                 eta1, _, phi_e1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
             else:
                 use_2d = True
                 if variant == '1' or (variant == '3' and new_eta is None):
-                    eta1, phi_e1, eta2, phi_e2 = ls_trial_steps(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h)
-                elif variant == '0' or new_eta is None: # saga0, or saga2 (re)initialization
+                    eta1, phi_e1, eta2, phi_e2, d2 = ls_trial_steps(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h)
+                elif variant == '0' or new_eta is None: # saga0, or saga2 (re)initialization normalized
                     eta1, eta2 = eta_init / n1, eta_init / n2
                 else: # saga2, saga3: stepsize from the previous step
                     eta1 = max(abs(2*new_eta[0]), min_trial_step_norm / n1)
                     eta2 = max(abs(2*new_eta[1]), min_trial_step_norm / n2)
 
+
             if use_2d and eta1 is not None and eta2 is not None:
-                eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h, debug=debug)
+                eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h, d2, debug=debug)
                 if eta is None:
                     counters['dls_rejected'] += 1
                     new_eta = None # re-initialize the stepsize next iteration

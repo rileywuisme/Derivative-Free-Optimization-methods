@@ -336,7 +336,7 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                 fx_history.append(fval)
                 fn_call_history.append(f.calls[0])
                 failed_both = 0
-                continue
+                continue #in the instances where I continue, I failed to update the stepsize history. 
             x = x - new_eta[0] * v1 - new_eta[1] * v2
             z = v2 - pk
             fval = float(f(x))
