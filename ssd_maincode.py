@@ -104,12 +104,12 @@ def counted(fn):
 def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h, debug=False):
     '''
     Quadratic model of phi(eta1, eta2) = func(x0 - eta1*v1 - eta2*v2), fitted from
-    phi(0,0), the gradient of phi at 0, and the stencil values phi(x,0), phi(0,y), phi(x,y).
+    phi(0,0), the gradient of phi at 0, and the stepsize values phi(x,0), phi(0,y), phi(x,y).
 
     func: function
     phi0: last function evaluation, func(x0)
     pk: -P P.T gradF (so v1 = -pk)
-    x, y: stencil values of eta1, eta2 (y may be negative)
+    x, y: stepsize values of eta1, eta2 (y may be negative)
     z: continuously updating gradient (v2 = z - P P.T z)
     h: precision of finite difference
 
@@ -119,7 +119,7 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h, debug=False):
     def phi(eta1, eta2):
         return func(x0 - eta1 * v1 - eta2 * v2)
     phi00 = phi0
-    b1 = - pk @ pk                                     # d phi/d eta1 at 0
+    b1 = - pk @ pk # d phi/d eta1 at 0
     b2 = - dir_deriv(func, x0, phi00, z, h) - z @ pk   # d phi/d eta2 at 0  #+1
     phix0 = phi(x, 0) #+1
     phi0y = phi(0, y) #+1
@@ -149,7 +149,7 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h, debug=False):
         return None, None
     return new_eta, phi1
 
-def ls_stencils(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h):
+def ls_trial_steps(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h):
     '''
     1D Armijo searches along v1 = -pk and along the descent sign of v2 (saga1, saga3).
     Convention: trial points are x - eta1*v1 and x - eta2*v2; eta2 may be negative.
@@ -162,45 +162,37 @@ def ls_stencils(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h):
     '''
     derphi0 = -float(PT_times_grad @ PT_times_grad)
     eta1, _, phi_e1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-    d2 = dir_deriv(f, x, fval, v2, h)   # grad f(x) @ v2   #+1
+    d2 = dir_deriv(f, x, fval, v2, h) # grad f(x) @ v2   #+1
     eta2, phi_e2 = None, None
     if d2 != 0:
-        sgn = -np.sign(d2)              # sgn*v2 is a descent direction, slope -|d2|
+        sgn = -np.sign(d2) # sgn*v2 is a descent direction, slope -|d2|
         amin2 = amin / np.linalg.norm(v2)
         a2, _, phi_a2 = linesearch(f, x, sgn * v2, -abs(d2), old_fval=fval, alpha0=max(alpha0, amin2), amin=amin2)
         if a2 is not None:
-            eta2, phi_e2 = -sgn * a2, phi_a2   # x + a2*sgn*v2 = x - eta2*v2
+            eta2, phi_e2 = -sgn * a2, phi_a2 # x + a2*sgn*v2 = x - eta2*v2
     return eta1, phi_e1, eta2, phi_e2
 
 def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin = 1e-6, L=None, 
-        alpha_max=10, qr = 'cholesky', h=1e-8, eta_init=0.005, stencil_min=1e-5, z_init = None, debug=False):
+        alpha_max=10, qr = 'cholesky', h=1e-8, eta_init=0.005, min_trial_step_norm=1e-5, z_init = None, debug=False):
     '''
     Parameters:
-    obj: objective function
+    f: objective function
     x: starting point x_0
-    ls: 'armijo', 'polyak', 'BB', 'off', 'saga0', 'saga1', 'saga2', 'saga3'
-    gradf: exact gradient (optional, "cheating" mode)
     l: subspace dimension
-    max_fn_call: function-evaluation budget
+    ls: linesearch 'on' or 'off'
+    max_iter: maximum iterations
     seed: random seed for rng
     amin: minimum step size
-    L: Lipschitz constant, required for ls='off'
+    L: Lipschitz value for calculating best alpha for fixed step version
     alpha_max: maximum step size
-    qr: 'scipy' or 'cholesky' (default)
-    h: step for all finite difference schemes
-    eta_init: saga stencil DISPLACEMENT ||eta*v|| used by saga0 and at (re)initialization of saga2
-    stencil_min: lower bound on the saga2/saga3 stencil displacement
-    z_init: None or 'grad' (full forward-difference gradient, costs dim evaluations)
-    debug: print the reason each double_ls rejection occurs
-
-    P always has orthonormal columns (unscaled Q). The fixed step for ls='off' is 1/L,
-    equivalent to Kozak's scaled P = sqrt(d/l) Q with alpha = l/(d L).
+    qr: calculating qr decomposition using scipy.linalg.qr 'scipy' or 'cholesky' (default)
+    alpha = whether or not to implement linesearch
+    h: the denominator for all finite difference schemes
 
     Return:
-    x_history, fx_history, stepsize_history, fn_call_history: equal-length arrays;
-        entry 0 is x_0 at fn_call = 1; stepsize_history[k] is the step that produced entry k
-        (0 for recorded points where no step was taken)
-    counters: dict with 'ls_failed', 'dls_rejected', 'one_dir', 'both_failed'
+    fx: an array of history of function evaluations
+    x_history: an array of history of x values
+    stepsize_history: an array of history of stepsize
 
     7/21/2026 note: change from max_iter to max_fn_call
     8/22/2026 note: for comparison purposes have saga0 as the original saga inspired algorithm with only eta_max as the input
@@ -208,10 +200,6 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
                     (alpha is the stepsize) then double_ls to find the minimum. 
                     saga2 has an initialized eta1 and eta2, then update the eta with the previous eta
                     saga3 is similar to saga2, but the initialized etas are from 1d linesearch. A combo of saga1 and saga2.
-    9/27/2026 note: f(x0) and all saga first steps recorded; saga3 implemented as documented; safeguarded
-                    Armijo; saga stencils scaled by direction norms; saga1 v2 slope sign fixed; A checked for
-                    positive definiteness; z updated on every saga iteration; counters fixed; BB uses the
-                    previous iterate; ls='off' uses orthonormal P with step 1/L.
     '''
     if ls not in VALID_LS:
         raise ValueError(f"unknown ls={ls!r}; expected one of {VALID_LS}")
@@ -267,7 +255,7 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             record(zero_step) # marks the cost of the gradient initialization
 
     first_step = True
-    new_eta = None   # previous (eta1, eta2); None means (re)initialize the stencil
+    new_eta = None   # previous (eta1, eta2); None means (re)initialize the stepsize
     x_prev, fval_prev = None, None   # for BB
 
     while f.calls[0] <= max_fn_call:      
@@ -370,7 +358,7 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             v1 = - pk
             v2 = z - P @ (P.T @ z)
 
-            #for safeguard purposes.
+            #step norms
             n1 = max(np.linalg.norm(v1), np.finfo(float).tiny) 
             n2 = np.linalg.norm(v2)
             eta1 = eta2 = phi_e1 = phi_e2 = None
@@ -384,18 +372,18 @@ def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin 
             else:
                 use_2d = True
                 if variant == '1' or (variant == '3' and new_eta is None):
-                    eta1, phi_e1, eta2, phi_e2 = ls_stencils(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h)
+                    eta1, phi_e1, eta2, phi_e2 = ls_trial_steps(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h)
                 elif variant == '0' or new_eta is None: # saga0, or saga2 (re)initialization
                     eta1, eta2 = eta_init / n1, eta_init / n2
-                else: # saga2, saga3: stencil from the previous step
-                    eta1 = max(abs(2*new_eta[0]), stencil_min / n1)
-                    eta2 = max(abs(2*new_eta[1]), stencil_min / n2)
+                else: # saga2, saga3: stepsize from the previous step
+                    eta1 = max(abs(2*new_eta[0]), min_trial_step_norm / n1)
+                    eta2 = max(abs(2*new_eta[1]), min_trial_step_norm / n2)
 
             if use_2d and eta1 is not None and eta2 is not None:
                 eta, phi1 = double_ls(f, fval, pk, eta1, eta2, z, x, v1, v2, h, debug=debug)
                 if eta is None:
                     counters['dls_rejected'] += 1
-                    new_eta = None # re-initialize the stencil next iteration
+                    new_eta = None # re-initialize the stepsize next iteration
                 else:
                     x = x - eta[0] * v1 - eta[1] * v2
                     fval = phi1
