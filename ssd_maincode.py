@@ -77,30 +77,29 @@ def linesearch(f, xk, pk, derphi0, old_fval=None, alpha0 = 1.0, c1=1e-4, amin=1e
     alpha, phi1 = armijo_backtrack(phi, phi0, derphi0, alpha0, c1=c1, amin=amin)
     return alpha, fc[0], phi1
 
-#forward different to calculate directional derivative
-def finite_diff_directional_deriv(x, f, fx, P, h=1e-8):
-    '''h should be the same as c in spsa'''
-    return np.array([(f(x+h*p) - fx)/h for p in P])
+def ls_trial_steps(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h):
+    '''
+    1D Armijo searches along v1 = -pk and along the descent sign of v2 (saga1, saga3).
+    Convention: trial points are x - eta1*v1 and x - eta2*v2; eta2 may be negative.
+    A failed search returns None for its eta.
 
-def dir_deriv(f, x, fx, v, h=1e-8):
-    '''Forward-difference estimate of grad f(x) @ v, differenced along the unit vector v/||v||
-    so the finite-difference error does not depend on ||v||. Costs 1 evaluation.'''
-    nv = np.linalg.norm(v)
-    if nv == 0:
-        return 0.0
-    return (f(x + (h / nv) * v) - fx) / h * nv
+    Along v1 = P P^T grad f the optimal multiplier is >= 1/lambda_max(P^T H P), so a multiplier
+    floor amin is harmless. Along v2 the optimal multiplier -grad f @ v2 / (v2^T H v2) can be
+    arbitrarily small (v2 is often nearly orthogonal to grad f), so amin is applied to the
+    displacement ||eta2 * v2|| instead.
+    '''
+    derphi0 = -float(PT_times_grad @ PT_times_grad)
+    eta1, _, phi_e1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
+    d2 = dir_deriv(f, x, fval, v2, h) # grad f(x) @ v2   #+1
+    eta2, phi_e2 = None, None
+    if d2 != 0:
+        sgn = -np.sign(d2) # sgn*v2 is a descent direction, slope -|d2|
+        amin2 = amin / np.linalg.norm(v2)
+        a2, _, phi_a2 = linesearch(f, x, sgn * v2, -abs(d2), old_fval=fval, alpha0=max(alpha0, amin2), amin=amin2)
+        if a2 is not None:
+            eta2, phi_e2 = -sgn * a2, phi_a2 # x + a2*sgn*v2 = x - eta2*v2
+    return eta1, phi_e1, eta2, phi_e2, d2
 
-#count function evaluations
-def counted(fn):
-    calls = [0]
-    def wrapped(*args, **kwargs):
-        calls[0] += 1
-        return fn(*args, **kwargs)
-    wrapped.calls = calls
-    wrapped.reset = lambda: calls.__setitem__(0, 0)
-    return wrapped
-
-#double linesearch
 def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h, d2, debug=False):
     '''
     Quadratic model of phi(eta1, eta2) = func(x0 - eta1*v1 - eta2*v2), fitted from
@@ -149,28 +148,28 @@ def double_ls(func, phi0, pk, x, y, z, x0, v1, v2, h, d2, debug=False):
         return None, None
     return new_eta, phi1
 
-def ls_trial_steps(f, x, fval, pk, PT_times_grad, v2, alpha0, amin, h):
-    '''
-    1D Armijo searches along v1 = -pk and along the descent sign of v2 (saga1, saga3).
-    Convention: trial points are x - eta1*v1 and x - eta2*v2; eta2 may be negative.
-    A failed search returns None for its eta.
+#forward different to calculate directional derivative
+def finite_diff_directional_deriv(x, f, fx, P, h=1e-8):
+    '''h should be the same as c in spsa'''
+    return np.array([(f(x+h*p) - fx)/h for p in P])
 
-    Along v1 = P P^T grad f the optimal multiplier is >= 1/lambda_max(P^T H P), so a multiplier
-    floor amin is harmless. Along v2 the optimal multiplier -grad f @ v2 / (v2^T H v2) can be
-    arbitrarily small (v2 is often nearly orthogonal to grad f), so amin is applied to the
-    displacement ||eta2 * v2|| instead.
-    '''
-    derphi0 = -float(PT_times_grad @ PT_times_grad)
-    eta1, _, phi_e1 = linesearch(f, x, pk, derphi0, old_fval=fval, alpha0=max(alpha0, amin), amin=amin)
-    d2 = dir_deriv(f, x, fval, v2, h) # grad f(x) @ v2   #+1
-    eta2, phi_e2 = None, None
-    if d2 != 0:
-        sgn = -np.sign(d2) # sgn*v2 is a descent direction, slope -|d2|
-        amin2 = amin / np.linalg.norm(v2)
-        a2, _, phi_a2 = linesearch(f, x, sgn * v2, -abs(d2), old_fval=fval, alpha0=max(alpha0, amin2), amin=amin2)
-        if a2 is not None:
-            eta2, phi_e2 = -sgn * a2, phi_a2 # x + a2*sgn*v2 = x - eta2*v2
-    return eta1, phi_e1, eta2, phi_e2, d2
+def dir_deriv(f, x, fx, v, h=1e-8):
+    '''Forward-difference estimate of grad f(x) @ v, differenced along the unit vector v/||v||
+    so the finite-difference error does not depend on ||v||. Costs 1 evaluation.'''
+    nv = np.linalg.norm(v)
+    if nv == 0:
+        return 0.0
+    return (f(x + (h / nv) * v) - fx) / h * nv
+
+#count function evaluations
+def counted(fn):
+    calls = [0]
+    def wrapped(*args, **kwargs):
+        calls[0] += 1
+        return fn(*args, **kwargs)
+    wrapped.calls = calls
+    wrapped.reset = lambda: calls.__setitem__(0, 0)
+    return wrapped
 
 def ssd(obj, x, ls=None, gradf=None, l = None, max_fn_call = 7000, seed=0, amin = 1e-6, L=None, 
         alpha_max=10, qr = 'cholesky', h=1e-8, eta_init=0.005, min_trial_step_norm=1e-5, z_init = None, debug=False):
