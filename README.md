@@ -12,9 +12,9 @@ $$-(JP)^\top r = (JP)^\top (JP) n$$
 Additionally, we combined the SSD with SAGA (Defazio et al.) 
 
 The algorithm is as follows: 
-\begin{equation*}
+$$
     x_{k+1} = x - \alpha_1 (I-PP^T)z - \alpha_2 PP^T \nabla f(x_k)
-\end{equation*}
+$$
 where z is a running sum approximating $\nabla f(x)$ defined by 
 $$ z = z + PP^T (\nabla f(x_k) - z) $$
 It is an analogue to the original SAGA (though we are not restricted to finite sum objectives)
